@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 import streamlit as st
@@ -7,7 +8,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_classic.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"), override=True)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FAISS_PATH = os.path.join(BASE_DIR, "vectorstore", "db_faiss")
