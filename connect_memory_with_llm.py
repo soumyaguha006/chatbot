@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
@@ -7,9 +8,16 @@ from langchain_classic.chains import RetrievalQA
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"), override=True)
 
-HF_TOKEN = os.environ.get("HF_TOKEN")
+HF_TOKEN = (
+    os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN") or ""
+).strip()
+if not HF_TOKEN:
+    raise RuntimeError(
+        "Hugging Face token not found. Set HF_TOKEN in chatbot/.env and ensure "
+        "the token has permission to call Inference Providers."
+    )
 HUGGINGFACE_REPO_ID = "Qwen/Qwen2.5-7B-Instruct"
 
 def setup_llm(repo_id):
