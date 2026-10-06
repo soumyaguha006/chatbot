@@ -1,12 +1,16 @@
+import io
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 import streamlit as st
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint, HuggingFaceEmbeddings
+from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from langchain_classic.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pypdf import PdfReader
 
 load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"), override=True)
 
@@ -21,6 +25,49 @@ def load_database():
         model_kwargs={"device": "cpu"},
     )
     return FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
+
+
+def load_uploaded_pdf(uploaded_file):
+    file_bytes = uploaded_file.getvalue()
+    reader = PdfReader(io.BytesIO(file_bytes))
+    documents = []
+
+    for page_number, page in enumerate(reader.pages, start=1):
+        page_content = page.extract_text() or ""
+        if page_content.strip():
+            documents.append(
+                Document(
+                    page_content=page_content,
+                    metadata={
+                        "source": uploaded_file.name,
+                        "page": page_number,
+                    },
+                )
+            )
+
+    if not documents:
+        raise ValueError(
+            f"{uploaded_file.name} contains no extractable text. Scanned PDFs "
+            "require OCR before they can be added."
+        )
+
+    return documents
+
+
+def add_uploaded_pdfs(uploaded_files):
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=50,
+    )
+    documents = []
+    for uploaded_file in uploaded_files:
+        documents.extend(load_uploaded_pdf(uploaded_file))
+
+    chunks = text_splitter.split_documents(documents)
+    vectorstore = load_database()
+    vectorstore.add_documents(chunks)
+    vectorstore.save_local(DB_FAISS_PATH)
+    return len(chunks)
 
 
 def set_custom_prompt(custom_prompt_template):
@@ -42,6 +89,40 @@ def setup_llm(repo_id, hf_token):
 
 def main():
     st.title("Ask Chatbot!")
+
+    with st.sidebar:
+        if "upload_widget_version" not in st.session_state:
+            st.session_state.upload_widget_version = 0
+
+        st.subheader("Add documents")
+        st.caption(
+            "Uploaded PDFs are added to the shared knowledge base and can be "
+            "used by all users of this app."
+        )
+        if "upload_success_message" in st.session_state:
+            st.success(st.session_state.pop("upload_success_message"))
+
+        uploaded_files = st.file_uploader(
+            "Choose PDF files",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key=f"knowledge_base_upload_{st.session_state.upload_widget_version}",
+        )
+        if st.button("Add to knowledge base", disabled=not uploaded_files):
+            with st.status("Adding documents to the knowledge base...", expanded=True) as status:
+                st.write("Extracting PDF text, creating embeddings, and saving the shared index.")
+                try:
+                    chunk_count = add_uploaded_pdfs(uploaded_files)
+                except Exception as exc:
+                    status.update(label="Unable to add uploaded documents", state="error")
+                    st.error(f"Unable to add uploaded documents: {exc}")
+                else:
+                    status.update(label="Documents added to the knowledge base", state="complete")
+                    st.session_state.upload_success_message = (
+                        f"Added {len(uploaded_files)} PDF(s) as {chunk_count} searchable text chunks."
+                    )
+                    st.session_state.upload_widget_version += 1
+                    st.rerun()
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
